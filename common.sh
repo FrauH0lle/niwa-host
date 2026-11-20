@@ -69,7 +69,7 @@ prepare_mounts() {
 	# No identity of the host's own: the model commits as the person it
 	# commits for (git -c user.name=... -c user.email=... commit), so they
 	# are author and committer both, and a plain commit fails instead of
-	# falling back to mevedel@mevedel-HOST.
+	# falling back to niwa@niwa-HOST.
 	useConfigOnly = true
 [pull]
 	ff = only
@@ -110,12 +110,12 @@ exclude() { # DIR PATH
     echo "$2" >> "$1/.git/info/exclude"
 }
 running() { # HOST
-  [ "$("$runtime" inspect -f '{{.State.Running}}' "mevedel-$1" 2>/dev/null)" = true ]
+  [ "$("$runtime" inspect -f '{{.State.Running}}' "niwa-$1" 2>/dev/null)" = true ]
 }
 # A running host whose daemon does not answer counts as busy: silence is no
 # evidence that no turn is running.  A stopped host is idle.
 busy() { # HOST
-  busy_answer=$("$runtime" exec "mevedel-$1" emacsclient -s mevedel \
-    -e '(mevedel-host-busy-p)' 2>/dev/null) || { running "$1"; return; }
+  busy_answer=$("$runtime" exec "niwa-$1" emacsclient -s niwa \
+    -e '(niwa-host-busy-p)' 2>/dev/null) || { running "$1"; return; }
   [ "$busy_answer" = t ]
 }

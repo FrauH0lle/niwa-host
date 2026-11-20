@@ -16,8 +16,8 @@ fi
 case $project in
   ''|.*|*[!A-Za-z0-9._-]*) echo "no project $project" >&2; exit 1 ;;
 esac
-link=$("$runtime" exec "mevedel-$service" emacsclient -s mevedel -e \
-  "(plist-get (mevedel-collaboration-lobby-start \"/projects/$project\") :link-owner)" \
+link=$("$runtime" exec "niwa-$service" emacsclient -s niwa -e \
+  "(plist-get (niwa-collaboration-lobby-start \"/projects/$project\") :link-owner)" \
   | tr -d '"')
 printf '%s\n' "$link"
 if command -v qrencode >/dev/null; then qrencode -t ansiutf8 "$link"; fi

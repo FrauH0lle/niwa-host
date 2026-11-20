@@ -1,6 +1,6 @@
-# mevedel hosts
+# niwa hosts
 
-Headless Emacs daemons in containers. Each keeps a mevedel lobby open on
+Headless Emacs daemons in containers. Each keeps a niwa lobby open on
 a collaboration relay for every one of its projects; a lobby link is a
 bookmark that survives restarts and lists, opens and creates sessions.
 
@@ -30,13 +30,13 @@ systemctl restart ssh
 ```
 
 `./deploy` installs your ssh key (`ssh-copy-id`), so afterwards delete
-that file again and restart ssh; root and `mevedel` then log in with the
+that file again and restart ssh; root and `niwa` then log in with the
 key only.
 
-1. Push mevedel; only pushed commits reach the server:
+1. Push niwa; only pushed commits reach the server:
 
    ```sh
-   cd ~/Projekte/mevedel && git push
+   cd ~/Projekte/niwa && git push
    ```
 
 2. Update the relay the usual way (`go build` and redeploy, or the
@@ -48,15 +48,15 @@ key only.
    ./deploy 192.0.2.10
    ```
 
-   It copies the folder to `/home/mevedel/mevedel-host` and runs `./setup`
+   It copies the folder to `/home/niwa/niwa-host` and runs `./setup`
    there as root, which
 
-   - installs Podman and podman-compose, and creates the user `mevedel`
+   - installs Podman and podman-compose, and creates the user `niwa`
      (with root's ssh keys) that owns the folder and runs the hosts
      rootless;
-   - asks once for the relay URL (`wss://mevedel.skadonk.me`) and the host
+   - asks once for the relay URL (`wss://niwa.skadonk.me`) and the host
      token from `~/.emacs.d/site-lisp/config.el`, and writes `.env`;
-   - clones mevedel and gptel, builds the image (5-10 minutes) and starts
+   - clones niwa and gptel, builds the image (5-10 minutes) and starts
      both hosts;
    - installs user systemd units that start the hosts on boot and run
      `./update` nightly at 4:00 (it skips nights when a turn is running).
@@ -65,7 +65,7 @@ key only.
    `.env`, `src/` and `projects/`.
 
 4. Log in to Codex, once per host (`ssh root@192.0.2.10` or
-   `ssh mevedel@192.0.2.10`, then `cd /home/mevedel/mevedel-host`):
+   `ssh niwa@192.0.2.10`, then `cd /home/niwa/niwa-host`):
 
    ```sh
    ./attach private
@@ -92,7 +92,7 @@ key only.
 
 The scripts work as root too: they switch to the folder's owner, since
 rootless containers are only visible to the user that runs them. For
-plain Podman commands, log in as `mevedel` (`ssh mevedel@...`).
+plain Podman commands, log in as `niwa` (`ssh niwa@...`).
 
 Coming from the earlier Docker setup, `./setup` stops the Docker hosts and
 copies the private one's state volume, so its Codex login and sessions
@@ -117,11 +117,11 @@ Usually they are git repositories:
 
 `add` opens the lobby right away and prints its owner link, and puts the
 model's git instructions into the project (see below). Cloning a
-private repository on the server needs credentials for `mevedel` there,
-e.g. a deploy key in `/home/mevedel/.ssh`. `remove` waits until the host
+private repository on the server needs credentials for `niwa` there,
+e.g. a deploy key in `/home/niwa/.ssh`. `remove` waits until the host
 is idle, restarts it and moves the project to `projects/.removed/`;
 delete it from there when you are sure; its lobby credentials live in
-its `.mevedel/`, so moving it back revives its links. A directory copied
+its `.niwa/`, so moving it back revives its links. A directory copied
 in by hand gets its lobby on the next restart (`./compose restart public`).
 
 Earlier, `projects/private` was itself the project; `./update` moves it to
@@ -146,7 +146,7 @@ lists it as untracked; ignoring it there would hide it from the lobby's
 file browser and the model's search.
 
 **Instructions.** `add` and `clone` copy `project-agents.md` into the
-project as `AGENTS.local.md`, which mevedel reads after `AGENTS.md`: pull
+project as `AGENTS.local.md`, which niwa reads after `AGENTS.md`: pull
 before changing anything, one branch per change, push it for a pull or
 merge request, and ask whom to commit as. List the people who commit
 there; an existing `AGENTS.local.md` is left alone. For a project from
@@ -172,7 +172,7 @@ full or owner link to that host's lobbies, so scope them to the
 repositories (deploy keys with write access, branch protection on the
 default branch).
 
-**Sync.** `./project refresh` (hourly, `mevedel-host-refs.timer`) fetches
+**Sync.** `./project refresh` (hourly, `niwa-host-refs.timer`) fetches
 every such repository inside its running host, with its credentials, and
 fast-forwards branches that track a remote. The checked-out branch moves
 only while its files are unchanged and the host is idle; a branch with
@@ -180,7 +180,7 @@ unpushed commits is never touched. In between, the model pulls before it
 starts. Git never runs on these repositories outside the container: the
 model can change their hooks and config.
 
-**Permissions.** mevedel keeps `.git` read-only for the model's commands
+**Permissions.** niwa keeps `.git` read-only for the model's commands
 by default; `init.el` lifts that on the hosts, since the container is the
 boundary. `git fetch` and `git pull` get network access without asking;
 `git push` asks for it, so the reviewer (or you) sees it first.
@@ -218,7 +218,7 @@ night, so whatever it installed with pacman would vanish anyway.
   `EXTRA_PACKAGES` in `.env` (Arch package names) and run `./update`,
   which rebuilds the image when the list changed.
 
-`podman volume rm mevedel-host_private-tools` (with the host stopped)
+`podman volume rm niwa-host_private-tools` (with the host stopped)
 throws away what the model installed there.
 
 ### Reference repositories
@@ -226,7 +226,7 @@ throws away what the model installed there.
 Where the model should read a repository but never change it, make it a
 reference instead. References are clones in `refs/HOST/NAME/`, outside the
 projects, and the container sees them read-only at `refs/` inside the
-project. A read-only mount holds even in Full Access, which mevedel's own
+project. A read-only mount holds even in Full Access, which niwa's own
 read-only paths do not:
 
 ```sh
@@ -244,7 +244,7 @@ it runs a turn; later ones appear right away. Dropping the last one
 restarts it likewise. `./project refresh` also brings every reference to
 its branch tip (discarding anything else, which only you could have put
 there) without a restart. Credentials for private references are
-`mevedel`'s on the server, as for `add`; the model never sees them.
+`niwa`'s on the server, as for `add`; the model never sees them.
 `remove` deletes the project's references along with its mounts, and
 keeps its other clones in the project it sets aside.
 
@@ -265,10 +265,10 @@ another service in `compose.yaml` like `public`, with its own volume.
 - **Lobby page says "Room closed":** check the relay URL and token in
   `.env`, then run `./update --force`.
 - **A host is not running:** `./compose ps`, `./compose logs private`.
-- **The nightly update:** `systemctl --user status mevedel-host-update`
-  and `journalctl --user -u mevedel-host-update` as `mevedel`.
-- **The hourly sync:** `journalctl --user -u mevedel-host-refs` as
-  `mevedel`; "could not fetch" usually means the host's credentials in
+- **The nightly update:** `systemctl --user status niwa-host-update`
+  and `journalctl --user -u niwa-host-update` as `niwa`.
+- **The hourly sync:** `journalctl --user -u niwa-host-refs` as
+  `niwa`; "could not fetch" usually means the host's credentials in
   `git/HOST` do not reach that repository.
 - **Session migrations during update:** `./update` fetches the sources and
   builds the image while the hosts still run, stops both hosts cleanly
@@ -297,8 +297,8 @@ they do not sync with your desktop.
 ## Running locally
 
 Copy `.env.example` to `.env`, set `HOST_UID` to `id -u` and
-`MEVEDEL_RELAY_URL=ws://127.0.0.1:7466`, run `./update`, add projects and
-run `~/Projekte/mevedel/relay/relay` alongside. With Docker instead of
+`NIWA_RELAY_URL=ws://127.0.0.1:7466`, run `./update`, add projects and
+run `~/Projekte/niwa/relay/relay` alongside. With Docker instead of
 Podman, delete the `userns_mode` line from `compose.yaml`. A phone cannot
 reach `127.0.0.1`; use the desktop browser.
 
@@ -342,3 +342,24 @@ forces it, e.g. for new Emacs or ELPA versions. `init.el` changes need only
 
 `/collab lobby rotate` inside a host (via `./attach`) revokes that lobby's
 links; other lobbies are unaffected.
+
+## Migrating from mevedel-host
+
+A one-off move from the old `mevedel` kit to a fresh container (the Unix
+user, units, volumes and `.env` keys are all renamed, so nothing is shared):
+
+1. Build a new Ubuntu/Debian CT and run `./deploy` against it.
+2. Copy `.env` from the old host, renaming every `MEVEDEL_*` key to `NIWA_*`
+   (`NIWA_REPO` is `https://github.com/FrauH0lle/niwa.git`).
+3. Copy `git/`, `refs/` and `projects/` from the old kit directory.
+4. Carry over the Codex and Claude logins, one volume per host, with
+   `podman volume export mevedel-host_NAME | podman volume import niwa-host_NAME -`
+   (create the target first with `podman volume create`). The mapping is
+   `emacs-state` to `private-state`, `public-state` to `public-state`, and
+   likewise `private-tools`/`public-tools`. Then check the ownership inside
+   the new volumes (`podman unshare ls -ln`); it must match the `niwa` user.
+5. Run `./update --force`. Its one-off pre-step moves every project's
+   `.mevedel/` to `.niwa/` (`scripts/migrate-from-mevedel.el`); it can be
+   removed from `update` after the cutover.
+
+Nothing on the old host is disabled or stopped by this.

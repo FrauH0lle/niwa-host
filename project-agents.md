@@ -28,5 +28,5 @@ read-only context.
 - Programs' configuration and state (e.g. glab's login) live in this
   project's `.xdg/` (`$XDG_CONFIG_HOME` and friends), not in `~/.config`;
   read them there.
-- Store project memories in `.agents/memory/`, not `.mevedel/memory/`, so
+- Store project memories in `.agents/memory/`, not `.niwa/memory/`, so
   they can be shared via git and used by other agent tools.

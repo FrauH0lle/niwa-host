@@ -3,4 +3,4 @@
 # around.  C-x 5 0 closes the frame and leaves the daemon running.
 service=${1:?usage: ./attach HOST}
 . "$(dirname "$0")/common.sh"
-exec "$runtime" exec -it "mevedel-$service" emacsclient -t -s mevedel
+exec "$runtime" exec -it "niwa-$service" emacsclient -t -s niwa

@@ -12,10 +12,10 @@
 # Runs as root on the relay's server.  Override the defaults in the
 # environment, e.g. RELAY_SERVICE=niwa-relay ./update.
 set -eu
-repo=${RELAY_REPO:-FrauH0lle/mevedel}
-asset=${RELAY_ASSET:-mevedel-relay}
-bin=${RELAY_BIN:-/usr/local/bin/mevedel-relay}
-service=${RELAY_SERVICE:-mevedel-relay}
+repo=${RELAY_REPO:-FrauH0lle/niwa}
+asset=${RELAY_ASSET:-niwa-relay}
+bin=${RELAY_BIN:-/usr/local/bin/niwa-relay}
+service=${RELAY_SERVICE:-niwa-relay}
 die() { echo "$*" >&2; exit 1; }
 
 if [ "${1:-}" = --install ]; then

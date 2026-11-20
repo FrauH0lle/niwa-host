@@ -2,12 +2,12 @@
 # Prepare an Ubuntu or Debian machine, VM or LXC container for the hosts.
 # Run as root from this folder inside the user's home; ./deploy does that.
 # Safe to repeat: it installs rootless Podman, gives the folder to the
-# user (mevedel unless MEVEDEL_USER says otherwise), asks for the relay
+# user (niwa unless NIWA_USER says otherwise), asks for the relay
 # once, starts the hosts and installs the boot start and nightly update.
 set -eu
 [ "$(id -u)" = 0 ] || { echo "run setup as root" >&2; exit 1; }
 cd "$(dirname "$(readlink -f "$0")")"
-user=${MEVEDEL_USER:-mevedel}
+user=${NIWA_USER:-niwa}
 
 echo "== Packages"
 apt-get update -q
@@ -79,25 +79,25 @@ set_env() { # KEY VALUE
 }
 set_env HOST_UID "$uid"
 get_env() { (set -a; . ./.env; eval "printf %s \"\${$1:-}\""); }
-if [ -z "$(get_env MEVEDEL_RELAY_HOST_TOKEN)" ]; then
+if [ -z "$(get_env NIWA_RELAY_HOST_TOKEN)" ]; then
   [ -t 0 ] || { echo "set the relay URL and token in $PWD/.env" >&2; exit 1; }
-  url=$(get_env MEVEDEL_RELAY_URL)
+  url=$(get_env NIWA_RELAY_URL)
   printf 'Relay URL [%s]: ' "$url"
   read -r answer
   printf 'Relay host token: '
   stty -echo; read -r token; stty echo; echo
-  set_env MEVEDEL_RELAY_URL "${answer:-$url}"
-  set_env MEVEDEL_RELAY_HOST_TOKEN "$token"
+  set_env NIWA_RELAY_URL "${answer:-$url}"
+  set_env NIWA_RELAY_HOST_TOKEN "$token"
 fi
 
 # Once: an earlier Docker setup on this machine.  Stop its hosts, which
 # would hold the same lobbies, and carry over the private one's state
 # volume with its Codex login and sessions.
 if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
-  for container in mevedel-private mevedel-work; do
+  for container in niwa-private niwa-work; do
     docker stop -t 30 "$container" >/dev/null 2>&1 || true
   done
-  for volume in mevedel-host_emacs-state; do
+  for volume in niwa-host_private-state; do
     from=$(docker volume inspect -f '{{.Mountpoint}}' "$volume" 2>/dev/null) || continue
     as_user podman volume exists "$volume" && continue
     echo "== Copying Docker volume $volume"
@@ -115,9 +115,9 @@ echo "== Boot start, nightly update and hourly repository refresh"
 units=$home/.config/systemd/user
 install -d -o "$user" -g "$user" "$home/.config" "$units"
 # KillMode=process: the containers outlive these units' processes.
-cat > "$units/mevedel-host.service" <<EOF
+cat > "$units/niwa-host.service" <<EOF
 [Unit]
-Description=mevedel hosts
+Description=niwa hosts
 
 [Service]
 Type=oneshot
@@ -130,16 +130,16 @@ TimeoutSec=15min
 [Install]
 WantedBy=default.target
 EOF
-cat > "$units/mevedel-host-update.service" <<EOF
+cat > "$units/niwa-host-update.service" <<EOF
 [Unit]
-Description=Update mevedel and gptel, restart the hosts if they changed
+Description=Update niwa and gptel, restart the hosts if they changed
 
 [Service]
 Type=oneshot
 ExecStart=$PWD/update
 KillMode=process
 EOF
-cat > "$units/mevedel-host-refs.service" <<EOF
+cat > "$units/niwa-host-refs.service" <<EOF
 [Unit]
 Description=Sync the projects' repositories with their remotes
 
@@ -147,7 +147,7 @@ Description=Sync the projects' repositories with their remotes
 Type=oneshot
 ExecStart=$PWD/project refresh
 EOF
-cat > "$units/mevedel-host-refs.timer" <<EOF
+cat > "$units/niwa-host-refs.timer" <<EOF
 [Unit]
 Description=Hourly repository refresh
 
@@ -158,9 +158,9 @@ RandomizedDelaySec=5min
 [Install]
 WantedBy=timers.target
 EOF
-cat > "$units/mevedel-host-update.timer" <<EOF
+cat > "$units/niwa-host-update.timer" <<EOF
 [Unit]
-Description=Nightly mevedel host update
+Description=Nightly niwa host update
 
 [Timer]
 OnCalendar=*-*-* 04:00
@@ -168,10 +168,10 @@ OnCalendar=*-*-* 04:00
 [Install]
 WantedBy=timers.target
 EOF
-chown "$user:$user" "$units"/mevedel-host*
+chown "$user:$user" "$units"/niwa-host*
 as_user systemctl --user daemon-reload
-as_user systemctl --user enable --now mevedel-host.service mevedel-host-update.timer \
-  mevedel-host-refs.timer
+as_user systemctl --user enable --now niwa-host.service niwa-host-update.timer \
+  niwa-host-refs.timer
 
 cat <<EOF
 

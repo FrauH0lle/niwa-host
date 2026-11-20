@@ -1,5 +1,5 @@
 # Each project's own program configuration.  compose.yaml mounts this as
-# /etc/profile.d/mevedel-project.sh, which login shells read; mevedel runs
+# /etc/profile.d/niwa-project.sh, which login shells read; niwa runs
 # the model's commands in one (`bash -lc'), all but the read-only ones such
 # as cat or ls.  A command started anywhere in /projects/NAME keeps its
 # programs' configuration, data, state and cache in /projects/NAME/.xdg, so

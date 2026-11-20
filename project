@@ -21,7 +21,7 @@ project_dir() { # HOST NAME
 has_refs() { [ -n "$(ls -A "refs/$1/$2" 2>/dev/null)" ]; } # HOST NAME
 
 # The model's git instructions on this host (pull first, branches, whom to
-# commit as) go into the project as AGENTS.local.md, which mevedel reads
+# commit as) go into the project as AGENTS.local.md, which niwa reads
 # after AGENTS.md.  An existing one is the project's to keep.  Excluded
 # only where the project pushes somewhere, since excluded files are hidden
 # from the lobby's file browser; its config is read, git not run.
@@ -161,7 +161,7 @@ case ${1:-list} in
     repo=$(basename "${4%/}" .git)
     case $repo in ''|.*|refs) die "cannot clone into $3/$repo" ;; esac
     [ ! -e "$dir/$repo" ] || die "$dir/$repo exists"
-    # Not excluded from the project's repository: mevedel's file browser
+    # Not excluded from the project's repository: niwa's file browser
     # and the model's search skip what it ignores.
     git clone -q "$4" "$dir/$repo"
     instruct "$dir"
@@ -228,7 +228,7 @@ case ${1:-list} in
     for host in $(hosts); do
       running "$host" || continue
       if busy "$host"; then state=busy; else state=idle; fi
-      "$runtime" exec "mevedel-$host" sh -c "$sync_script" sync "$state" ||
+      "$runtime" exec "niwa-$host" sh -c "$sync_script" sync "$state" ||
         failed="$failed $host"
     done
     [ -z "$failed" ] || die "could not refresh:$failed" ;;

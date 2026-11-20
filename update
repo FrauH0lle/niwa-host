@@ -1,5 +1,5 @@
 #!/bin/sh
-# Bring src/mevedel and src/gptel to their branch tips, migrate sessions
+# Bring src/niwa and src/gptel to their branch tips, migrate sessions
 # while the hosts are stopped, then start the hosts again.
 #
 # Refuses while any host is running a turn, so it is safe to run nightly
@@ -29,7 +29,7 @@ esac
 if [ -z "$force" ]; then
   for service in $services; do
     if busy "$service"; then
-      echo "mevedel-$service is running a turn or not answering; not updating (--force overrides)"
+      echo "niwa-$service is running a turn or not answering; not updating (--force overrides)"
       exit 1
     fi
   done
@@ -53,13 +53,13 @@ checkout() { # DIR REPO BRANCH REVISION
 }
 
 revisions() {
-  for dir in src/mevedel src/gptel; do
+  for dir in src/niwa src/gptel; do
     git -C "$dir" rev-parse HEAD 2>/dev/null || echo none
   done
 }
 
 mkdir -p src
-mevedel_rev=$(fetch src/mevedel "$MEVEDEL_REPO" "$MEVEDEL_BRANCH")
+niwa_rev=$(fetch src/niwa "$NIWA_REPO" "$NIWA_BRANCH")
 gptel_rev=$(fetch src/gptel "$GPTEL_REPO" "$GPTEL_BRANCH")
 
 # Built here rather than by compose, with host networking like the hosts
@@ -68,12 +68,12 @@ gptel_rev=$(fetch src/gptel "$GPTEL_REPO" "$GPTEL_BRANCH")
 # A changed EXTRA_PACKAGES in .env or a change to the files the image is
 # built from rebuilds it too.  Running hosts keep their image until they
 # are recreated.
-image=localhost/mevedel-host:latest
+image=localhost/niwa-host:latest
 extra=${EXTRA_PACKAGES:-}
 kit=$(cat Dockerfile install.el compile.el entrypoint.sh | sha256sum | cut -c1-16)
 if [ -n "$rebuild" ] \
    || ! built=$("$runtime" image inspect --format \
-                  '{{index .Config.Labels "mevedel-host.extra-packages"}} {{index .Config.Labels "mevedel-host.kit"}}' \
+                  '{{index .Config.Labels "niwa-host.extra-packages"}} {{index .Config.Labels "niwa-host.kit"}}' \
                   "$image" 2>/dev/null) \
    || [ "$built" != "$extra $kit" ]; then
   "$runtime" build --network host --build-arg HOST_UID="${HOST_UID:-1000}" \
@@ -112,14 +112,14 @@ for service in $services; do
 done
 
 before=$(revisions)
-checkout src/mevedel "$MEVEDEL_REPO" "$MEVEDEL_BRANCH" "$mevedel_rev"
+checkout src/niwa "$NIWA_REPO" "$NIWA_BRANCH" "$niwa_rev"
 checkout src/gptel "$GPTEL_REPO" "$GPTEL_BRANCH" "$gptel_rev"
 after=$(revisions)
 
 if [ "$before" = "$after" ] && [ -z "$force" ]; then
-  echo "Up to date: $(git -C src/mevedel log -1 --format='mevedel %h %s')"
+  echo "Up to date: $(git -C src/niwa log -1 --format='niwa %h %s')"
 else
-  echo "Updated: $(git -C src/mevedel log -1 --format='mevedel %h %s')"
+  echo "Updated: $(git -C src/niwa log -1 --format='niwa %h %s')"
   echo "         $(git -C src/gptel log -1 --format='gptel %h %s')"
 fi
 
@@ -137,20 +137,36 @@ prepare_mounts
 # Include the old top-level project as well as every served project directory.
 # The CLI prints per-session outcomes/backups and fails closed on any error.
 for service in $services; do
+  # ONE-OFF, remove after the mevedel -> niwa cutover: move each workspace's
+  # .mevedel/ to .niwa/ (and the user directory, which niwa keeps at
+  # /home/niwa/.niwa -- the container's home, not a volume, so normally
+  # absent).  Fails closed like the session migrator (set -e).
+  echo "Checking mevedel -> niwa migration for $service"
+  "$runtime" compose run --rm --no-deps -T \
+    --name "niwa-from-mevedel-$service-$$" --entrypoint sh "$service" -c '
+      set -e
+      for dir in /projects/* /home/niwa; do
+        [ -d "$dir/.mevedel" ] && [ ! -d "$dir/.niwa" ] || continue
+        echo "Migrating $dir"
+        emacs --batch -Q -l /opt/compile.el \
+          -l /src/niwa/scripts/migrate-from-mevedel.el \
+          -f niwa-migrate-from-mevedel-main "$dir"
+      done'
+
   echo "Checking session migrations for $service"
   "$runtime" compose run --rm --no-deps -T \
-    --name "mevedel-migration-$service-$$" --entrypoint emacs "$service" \
+    --name "niwa-migration-$service-$$" --entrypoint emacs "$service" \
     --batch -Q \
     -l /opt/compile.el \
-    -l /src/mevedel/scripts/migrate-sessions.el \
+    -l /src/niwa/scripts/migrate-sessions.el \
     --eval '(dolist (project (cons "/projects"
                                   (directory-files "/projects" t "\\`[^.]")))
-              (let ((sessions (expand-file-name ".mevedel/sessions" project)))
+              (let ((sessions (expand-file-name ".niwa/sessions" project)))
                 (when (and (file-directory-p project)
                            (file-directory-p sessions))
                   (princ (format "Checking %s\n" sessions))
                   (let ((command-line-args-left (list sessions)))
-                    (mevedel-migrate-session-main)))))'
+                    (niwa-migrate-session-main)))))'
 done
 
 "$runtime" compose up -d --force-recreate 9>&-

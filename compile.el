@@ -1,8 +1,8 @@
 ;;; compile.el --- Byte-compile the mounted sources when they changed -*- lexical-binding: t; -*-
 
-;; mevedel finds its prompts, agents and editor bundle next to its own
+;; niwa finds its prompts, agents and editor bundle next to its own
 ;; files, so bytecode is written beside the sources.  Any change recompiles
-;; everything from that repository on, gptel before mevedel: inlined struct
+;; everything from that repository on, gptel before niwa: inlined struct
 ;; accessors and macros make a partial recompile unsafe.
 
 (require 'package)
@@ -17,7 +17,7 @@
               (or (apply compile file args)
                   (error "Compilation failed: %s" file))))
 
-(defconst host--repos '("/src/gptel" "/src/mevedel"))
+(defconst host--repos '("/src/gptel" "/src/niwa"))
 
 (defun host--sources (dir)
   "Return DIR's top-level Elisp sources."
