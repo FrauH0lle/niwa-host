@@ -22,7 +22,7 @@
 
 (require 'package)
 (setq package-user-dir "/opt/elpa"
-      ;; The entrypoint recompiles on start; never load stale bytecode.
+      ;; ./update compiles /src; never load stale bytecode.
       load-prefer-newer t)
 (package-initialize)
 (add-to-list 'load-path "/src/gptel")

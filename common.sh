@@ -109,7 +109,13 @@ exclude() { # DIR PATH
   grep -qxF "$2" "$1/.git/info/exclude" 2>/dev/null ||
     echo "$2" >> "$1/.git/info/exclude"
 }
+running() { # HOST
+  [ "$("$runtime" inspect -f '{{.State.Running}}' "mevedel-$1" 2>/dev/null)" = true ]
+}
+# A running host whose daemon does not answer counts as busy: silence is no
+# evidence that no turn is running.  A stopped host is idle.
 busy() { # HOST
-  "$runtime" exec "mevedel-$1" emacsclient -s mevedel \
-    -e '(mevedel-host-busy-p)' 2>/dev/null | grep -qx t
+  busy_answer=$("$runtime" exec "mevedel-$1" emacsclient -s mevedel \
+    -e '(mevedel-host-busy-p)' 2>/dev/null) || { running "$1"; return; }
+  [ "$busy_answer" = t ]
 }

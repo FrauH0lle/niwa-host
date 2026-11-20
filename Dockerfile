@@ -1,5 +1,6 @@
 # Headless mevedel host image: Emacs and dependencies only.  mevedel and
-# gptel are git clones under src/, mounted at /src and compiled on start,
+# gptel are git clones under src/, compiled by ./update and mounted
+# read-only at /src,
 # so updating them needs ./update, not a rebuild.  `./update --rebuild'
 # rebuilds when Emacs or the ELPA dependencies change; ./update rebuilds by
 # itself when EXTRA_PACKAGES in .env changes.
@@ -59,3 +60,6 @@ ENV PATH=/home/mevedel/tools/bin:/home/mevedel/tools/npm/bin:/home/mevedel/.loca
     NPM_CONFIG_CACHE=/tmp/npm-cache
 WORKDIR /projects
 ENTRYPOINT ["/opt/entrypoint.sh"]
+# The kit files this image was built from, so ./update notices changes.
+ARG KIT=
+LABEL mevedel-host.kit="$KIT"

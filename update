@@ -7,6 +7,8 @@
 # --rebuild also rebuilds the image, for Emacs or ELPA dependency changes.
 # Even unchanged sources need an offline migration check.  Migration failures
 # leave the hosts stopped, with the migrator's original-session backups intact.
+# Fetching and building happen before the hosts stop, so a network or build
+# failure leaves them running the old code.
 set -eu
 . "$(dirname "$0")/common.sh"
 # Serialize manual updates and the nightly timer, including source changes
@@ -27,10 +29,55 @@ esac
 if [ -z "$force" ]; then
   for service in $services; do
     if busy "$service"; then
-      echo "mevedel-$service is running a turn; not updating (--force overrides)"
+      echo "mevedel-$service is running a turn or not answering; not updating (--force overrides)"
       exit 1
     fi
   done
+fi
+
+# The clones are deployment copies: the branch tip wins, even after a
+# force push, and nothing local is kept but ignored bytecode.  Fetched
+# now, checked out once the hosts are stopped.
+fetch() { # DIR REPO BRANCH
+  if [ -d "$1/.git" ]; then
+    git -C "$1" fetch -q "$2" "$3"
+    git -C "$1" rev-parse FETCH_HEAD
+  fi
+}
+checkout() { # DIR REPO BRANCH REVISION
+  if [ -n "$4" ]; then
+    git -C "$1" reset -q --hard "$4"
+  else
+    git clone -q --branch "$3" "$2" "$1"
+  fi
+}
+
+revisions() {
+  for dir in src/mevedel src/gptel; do
+    git -C "$dir" rev-parse HEAD 2>/dev/null || echo none
+  done
+}
+
+mkdir -p src
+mevedel_rev=$(fetch src/mevedel "$MEVEDEL_REPO" "$MEVEDEL_BRANCH")
+gptel_rev=$(fetch src/gptel "$GPTEL_REPO" "$GPTEL_BRANCH")
+
+# Built here rather than by compose, with host networking like the hosts
+# themselves: the rootless network helper (pasta) crashes in some LXC
+# containers, and compose cannot pass the build a network.
+# A changed EXTRA_PACKAGES in .env or a change to the files the image is
+# built from rebuilds it too.  Running hosts keep their image until they
+# are recreated.
+image=localhost/mevedel-host:latest
+extra=${EXTRA_PACKAGES:-}
+kit=$(cat Dockerfile install.el compile.el entrypoint.sh | sha256sum | cut -c1-16)
+if [ -n "$rebuild" ] \
+   || ! built=$("$runtime" image inspect --format \
+                  '{{index .Config.Labels "mevedel-host.extra-packages"}} {{index .Config.Labels "mevedel-host.kit"}}' \
+                  "$image" 2>/dev/null) \
+   || [ "$built" != "$extra $kit" ]; then
+  "$runtime" build --network host --build-arg HOST_UID="${HOST_UID:-1000}" \
+    --build-arg EXTRA_PACKAGES="$extra" --build-arg KIT="$kit" -t "$image" .
 fi
 
 # Old code must save sessions and release ownership before either project
@@ -64,27 +111,9 @@ for service in $services; do
   done
 done
 
-# The clones are deployment copies: the branch tip wins, even after a
-# force push, and nothing local is kept but ignored bytecode.
-sync() { # DIR REPO BRANCH
-  if [ -d "$1/.git" ]; then
-    git -C "$1" fetch -q "$2" "$3"
-    git -C "$1" reset -q --hard FETCH_HEAD
-  else
-    git clone -q --branch "$3" "$2" "$1"
-  fi
-}
-
-revisions() {
-  for dir in src/mevedel src/gptel; do
-    git -C "$dir" rev-parse HEAD 2>/dev/null || echo none
-  done
-}
-
-mkdir -p src
 before=$(revisions)
-sync src/mevedel "$MEVEDEL_REPO" "$MEVEDEL_BRANCH"
-sync src/gptel "$GPTEL_REPO" "$GPTEL_BRANCH"
+checkout src/mevedel "$MEVEDEL_REPO" "$MEVEDEL_BRANCH" "$mevedel_rev"
+checkout src/gptel "$GPTEL_REPO" "$GPTEL_BRANCH" "$gptel_rev"
 after=$(revisions)
 
 if [ "$before" = "$after" ] && [ -z "$force" ]; then
@@ -93,37 +122,25 @@ else
   echo "Updated: $(git -C src/mevedel log -1 --format='mevedel %h %s')"
   echo "         $(git -C src/gptel log -1 --format='gptel %h %s')"
 fi
-# Built here rather than by compose, with host networking like the hosts
-# themselves: the rootless network helper (pasta) crashes in some LXC
-# containers, and compose cannot pass the build a network.
-# A changed EXTRA_PACKAGES in .env rebuilds it too.
-image=localhost/mevedel-host:latest
-extra=${EXTRA_PACKAGES:-}
-if [ -n "$rebuild" ] \
-   || ! built=$("$runtime" image inspect --format \
-                  '{{index .Config.Labels "mevedel-host.extra-packages"}}' \
-                  "$image" 2>/dev/null) \
-   || [ "$built" != "$extra" ]; then
-  "$runtime" build --network host --build-arg HOST_UID="${HOST_UID:-1000}" \
-    --build-arg EXTRA_PACKAGES="$extra" -t "$image" .
-fi
+
+# The only writer of src/: one container, outside both trust boundaries,
+# with no network.  keep-id leaves the bytecode owned by this user.
+userns=
+[ "$runtime" != podman ] || userns=--userns=keep-id
+"$runtime" run --rm --network none $userns -v "$PWD/src:/src" \
+  --entrypoint emacs "$image" --batch -l /opt/compile.el
 prepare_mounts
 
 # Use each service's image, dependencies, user and project mounts, but never
-# its daemon entrypoint.  Compile before loading the standalone migrator.
+# its daemon entrypoint.  compile.el here only sets up the load path: the
+# sources are compiled and read-only.
 # Include the old top-level project as well as every served project directory.
 # The CLI prints per-session outcomes/backups and fails closed on any error.
 for service in $services; do
   echo "Checking session migrations for $service"
   "$runtime" compose run --rm --no-deps -T \
-    --name "mevedel-migration-$service-$$" --entrypoint flock "$service" \
-    /src/.compile.lock emacs --batch -Q \
-    --eval '(progn
-              (require (quote bytecomp))
-              (advice-add (quote byte-compile-file) :around
-                          (lambda (compile file &rest args)
-                            (or (apply compile file args)
-                                (error "Compilation failed: %s" file)))))' \
+    --name "mevedel-migration-$service-$$" --entrypoint emacs "$service" \
+    --batch -Q \
     -l /opt/compile.el \
     -l /src/mevedel/scripts/migrate-sessions.el \
     --eval '(dolist (project (cons "/projects"

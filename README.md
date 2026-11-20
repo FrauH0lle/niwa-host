@@ -270,8 +270,9 @@ another service in `compose.yaml` like `public`, with its own volume.
 - **The hourly sync:** `journalctl --user -u mevedel-host-refs` as
   `mevedel`; "could not fetch" usually means the host's credentials in
   `git/HOST` do not reach that repository.
-- **Session migrations during update:** `./update` stops both hosts cleanly
-  before replacing sources, compiles the new code in one-off containers, and
+- **Session migrations during update:** `./update` fetches the sources and
+  builds the image while the hosts still run, stops both hosts cleanly
+  before replacing sources, compiles the new code in one one-off container, and
   runs the standalone session migrator for every served project (including
   any old top-level project). It also checks sessions when source revisions
   are unchanged, so every update briefly interrupts the hosts. Already-current
@@ -303,14 +304,20 @@ reach `127.0.0.1`; use the desktop browser.
 
 ## Updating
 
-`./update` stops the hosts cleanly, brings `src/` to the branch tips in `.env`,
-then compiles and migrates each host's project sessions in one-off containers
-before recreating the hosts. It checks migrations even when sources are
-unchanged; current sessions are a no-op, but the hosts still briefly stop.
-Compilation or migration failures prevent restart. The command refuses while
-a turn is running; `--force` overrides only that busy check. Only pushed commits
-reach the hosts. Rebuild the image only when Emacs or the ELPA dependencies
-change (`./update --rebuild`); `init.el` changes need only `./update`.
+`./update` fetches the branch tips in `.env` and builds the image if needed
+while the hosts still run, so a network or build failure changes nothing.
+Then it stops the hosts cleanly, brings `src/` to the fetched tips, compiles
+it in a one-off container without network, and migrates each host's project
+sessions before recreating the hosts. The hosts mount `src/` read-only: the
+compile step is its only writer, so neither host can change code the other
+loads. It checks migrations even when sources are unchanged; current sessions
+are a no-op, but the hosts still briefly stop. Compilation or migration
+failures prevent restart. The command refuses while a turn is running or a
+running host does not answer; `--force` overrides only that busy check. Only
+pushed commits reach the hosts. The image is rebuilt by itself when
+`EXTRA_PACKAGES` or the files it is built from change; `./update --rebuild`
+forces it, e.g. for new Emacs or ELPA versions. `init.el` changes need only
+`./update`.
 
 `/collab lobby rotate` inside a host (via `./attach`) revokes that lobby's
 links; other lobbies are unaffected.

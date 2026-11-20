@@ -10,6 +10,13 @@
       byte-compile-warnings nil)
 (package-initialize)
 
+;; `byte-compile-file' reports failure by its value; make it stop the update.
+(require 'bytecomp)
+(advice-add 'byte-compile-file :around
+            (lambda (compile file &rest args)
+              (or (apply compile file args)
+                  (error "Compilation failed: %s" file))))
+
 (defconst host--repos '("/src/gptel" "/src/mevedel"))
 
 (defun host--sources (dir)

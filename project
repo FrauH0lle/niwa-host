@@ -18,7 +18,6 @@ project_dir() { # HOST NAME
   case $2 in ''|.*|*[!A-Za-z0-9._-]*) die "a name is letters, digits, . _ -" ;; esac
   printf %s/%s "$(projects_dir "$1")" "$2"
 }
-running() { [ "$("$runtime" inspect -f '{{.State.Running}}' "mevedel-$1" 2>/dev/null)" = true ]; }
 has_refs() { [ -n "$(ls -A "refs/$1/$2" 2>/dev/null)" ]; } # HOST NAME
 
 # The model's git instructions on this host (pull first, branches, whom to
