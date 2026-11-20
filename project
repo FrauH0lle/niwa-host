@@ -1,0 +1,238 @@
+#!/bin/sh
+# A host's projects, each a git repository with its own lobby:
+#   ./project                            list them
+#   ./project add HOST NAME [GIT-URL]    clone or create one, open its lobby
+#   ./project remove HOST NAME           set one aside in projects/.removed
+#   ./project clone HOST NAME GIT-URL    add a repository the model works in
+#   ./project unclone HOST NAME REPO     set one aside in projects/.removed
+#   ./project ref HOST NAME GIT-URL      add a read-only reference repository
+#   ./project unref HOST NAME REPO       drop one
+#   ./project refresh                    sync all with their remotes
+set -eu
+. "$(dirname "$0")/common.sh"
+
+usage() { sed -n 3,10p "$self" | cut -c3- >&2; exit 1; }
+die() { echo "$*" >&2; exit 1; }
+project_dir() { # HOST NAME
+  hosts | grep -qx "$1" || die "no host $1; there are: $(hosts | tr '\n' ' ')"
+  case $2 in ''|.*|*[!A-Za-z0-9._-]*) die "a name is letters, digits, . _ -" ;; esac
+  printf %s/%s "$(projects_dir "$1")" "$2"
+}
+running() { [ "$("$runtime" inspect -f '{{.State.Running}}' "mevedel-$1" 2>/dev/null)" = true ]; }
+has_refs() { [ -n "$(ls -A "refs/$1/$2" 2>/dev/null)" ]; } # HOST NAME
+
+# The model's git instructions on this host (pull first, branches, whom to
+# commit as) go into the project as AGENTS.local.md, which mevedel reads
+# after AGENTS.md.  An existing one is the project's to keep.  Excluded
+# only where the project pushes somewhere, since excluded files are hidden
+# from the lobby's file browser; its config is read, git not run.
+instruct() { # DIR
+  [ -e "$1/AGENTS.local.md" ] || cp project-agents.md "$1/AGENTS.local.md"
+  if grep -q '^\[remote ' "$1/.git/config" 2>/dev/null; then
+    exclude "$1" /AGENTS.local.md
+  fi
+}
+
+# Run in a host's container by refresh, for every repository the model can
+# write to: the project itself and the clones in it.  The model can change
+# a repository's config and hooks, so git never runs on them out here.  It
+# fetches, then fast-forwards the branches that track a remote; the checked
+# out one only when its files are unchanged and the host is idle ($1).
+# Diverged branches stay as they are, so no local work is lost.
+sync_script='
+failed=
+for git in /projects/*/.git /projects/*/*/.git; do
+  [ -d "$git" ] || continue
+  repo=${git%/.git}
+  [ -n "$(git -C "$repo" remote)" ] || continue
+  if ! git -C "$repo" fetch -q --all --prune; then
+    failed="$failed $repo"
+    continue
+  fi
+  head=$(git -C "$repo" symbolic-ref -q HEAD) || head=
+  git -C "$repo" for-each-ref --format="%(refname) %(upstream)" refs/heads |
+    while read -r branch upstream; do
+      [ -n "$upstream" ] || continue
+      if [ "$branch" != "$head" ]; then
+        git -C "$repo" fetch -q . "$upstream:$branch" 2>/dev/null || :
+      elif [ "$1" = idle ]; then
+        git -C "$repo" update-index -q --refresh
+        git -C "$repo" diff-index --quiet HEAD -- &&
+          git -C "$repo" merge -q --ff-only "$upstream" 2>/dev/null || :
+      fi
+    done
+done
+[ -z "$failed" ] || { echo "could not fetch:$failed" >&2; exit 1; }'
+
+# compose.refs.yaml mounts refs/HOST/NAME read-only at refs/ inside project
+# NAME, for every project with references.  It is written from refs/ alone,
+# so it never needs editing.
+write_refs_compose() {
+  services=
+  for host in $(hosts); do
+    volumes=
+    # Its variables are global; the callers keep theirs in ref and dir.
+    for refs in refs/"$host"/*/; do
+      name=$(basename "$refs")
+      has_refs "$host" "$name" || continue
+      volumes="$volumes      - ./refs/$host/$name:/projects/$name/refs:ro
+"
+    done
+    [ -z "$volumes" ] || services="$services  $host:
+    volumes:
+$volumes"
+  done
+  {
+    echo "# Written by ./project from refs/; edits are overwritten."
+    if [ -n "$services" ]; then printf 'services:\n%s' "$services"
+    else echo "services: {}"; fi
+  } > compose.refs.yaml.new
+  mv compose.refs.yaml.new compose.refs.yaml
+}
+
+# A changed mount set takes effect only in a recreated container, which
+# would end a running turn.
+remount() { # HOST
+  write_refs_compose
+  prepare_mounts
+  if running "$1"; then "$runtime" compose up -d --force-recreate "$1"; fi
+}
+idle() { # HOST
+  ! running "$1" || ! busy "$1" || die "$1 is running a turn; try again later"
+}
+
+case ${1:-list} in
+  list)
+    for host in $(hosts); do
+      echo "$host:"
+      for dir in "$(projects_dir "$host")"/*/; do
+        [ -d "$dir" ] || continue
+        name=$(basename "$dir")
+        echo "  $name"
+        for git in "$dir"*/.git; do
+          if [ -d "$git" ]; then echo "    $(basename "${git%/.git}")"; fi
+        done
+        for ref in refs/"$host/$name"/*/; do
+          if [ -d "$ref" ]; then echo "    refs/$(basename "$ref") (read-only)"; fi
+        done
+      done
+    done ;;
+
+  add)
+    [ $# -ge 3 ] || usage
+    dir=$(project_dir "$2" "$3")
+    [ ! -e "$dir" ] || die "$dir exists"
+    if [ -n "${4:-}" ]; then git clone "$4" "$dir"; else git init -q "$dir"; fi
+    instruct "$dir"
+    exclude "$dir" /.xdg/
+    if running "$2"; then
+      exec ./lobby-link "$2" "$3"
+    fi
+    echo "Its lobby opens when $2 starts." ;;
+
+  remove)
+    [ $# -ge 3 ] || usage
+    dir=$(project_dir "$2" "$3")
+    [ -d "$dir" ] || die "$2 has no project $3"
+    ! busy "$2" || die "$2 is running a turn; try again later"
+    aside=projects/.removed/$2/$3-$(date +%Y%m%d-%H%M%S)
+    mkdir -p "$(dirname "$aside")"
+    was_running=
+    ! running "$2" || was_running=1
+    # Stopped first: the host saves the project's sessions into it on exit.
+    [ -z "$was_running" ] || "$runtime" compose stop "$2"
+    mv "$dir" "$aside"
+    if has_refs "$2" "$3"; then
+      # Mirrors, so nothing is lost; ref clones them again.
+      rm -rf "refs/$2/$3"
+      write_refs_compose
+      [ -z "$was_running" ] || "$runtime" compose up -d --force-recreate "$2"
+    else
+      [ -z "$was_running" ] || "$runtime" compose start "$2"
+    fi
+    echo "Moved to $aside; its lobby links are dead.  Delete it when sure." ;;
+
+  clone)
+    # A workspace like the project itself: the model commits, branches and
+    # pushes there with the host's git identity and credentials (git/HOST).
+    # Inside the project, so it needs no mount and appears right away.
+    [ $# -ge 4 ] || usage
+    dir=$(project_dir "$2" "$3")
+    [ -d "$dir" ] || die "$2 has no project $3"
+    repo=$(basename "${4%/}" .git)
+    case $repo in ''|.*|refs) die "cannot clone into $3/$repo" ;; esac
+    [ ! -e "$dir/$repo" ] || die "$dir/$repo exists"
+    # Not excluded from the project's repository: mevedel's file browser
+    # and the model's search skip what it ignores.
+    git clone -q "$4" "$dir/$repo"
+    instruct "$dir"
+    echo "$3 has it as $repo; ./project refresh syncs it hourly." ;;
+
+  unclone)
+    # It may hold unpushed work, so it is set aside rather than deleted.
+    [ $# -ge 4 ] || usage
+    dir=$(project_dir "$2" "$3")
+    case $4 in ''|.*|*/*) die "no repository $4" ;; esac
+    [ -d "$dir/$4/.git" ] || die "$3 has no repository $4"
+    idle "$2"
+    aside=projects/.removed/$2/$3-$4-$(date +%Y%m%d-%H%M%S)
+    mkdir -p "$(dirname "$aside")"
+    mv "$dir/$4" "$aside"
+    echo "Moved to $aside.  Delete it when sure." ;;
+
+  ref)
+    # Context for the model, not a workspace: the container sees the clone
+    # read-only, so not even Full Access can change it.
+    [ $# -ge 4 ] || usage
+    dir=$(project_dir "$2" "$3")
+    [ -d "$dir" ] || die "$2 has no project $3"
+    ref=refs/$2/$3/$(basename "${4%/}" .git)
+    [ ! -e "$ref" ] || die "$ref exists"
+    first=
+    has_refs "$2" "$3" || first=1
+    [ -z "$first" ] || idle "$2"
+    mkdir -p "$(dirname "$ref")" "$dir/refs"
+    git clone -q "$4" "$ref"
+    # Later ones appear in the mounted directory right away.
+    [ -z "$first" ] || remount "$2"
+    echo "$3 sees it as refs/$(basename "$ref"); ./project refresh keeps it current." ;;
+
+  unref)
+    [ $# -ge 4 ] || usage
+    dir=$(project_dir "$2" "$3")
+    case $4 in ''|.*|*/*) die "no reference $4" ;; esac
+    [ -d "refs/$2/$3/$4" ] || die "$3 has no reference $4"
+    last=
+    [ "$(ls -A "refs/$2/$3")" != "$4" ] || last=1
+    [ -z "$last" ] || idle "$2"
+    rm -rf "refs/$2/$3/$4"
+    if [ -n "$last" ]; then
+      rmdir "refs/$2/$3"
+      remount "$2"
+      rmdir "$dir/refs" 2>/dev/null || true
+    fi
+    echo "Dropped refs/$4 from $3." ;;
+
+  refresh)
+    # References are mirrors: the branch tip wins, even after a force push.
+    # The container cannot write them, so git runs on them out here.  One
+    # failure does not keep the others stale.
+    failed=
+    for git in refs/*/*/*/.git; do
+      [ -d "$git" ] || continue
+      ref=${git%/.git}
+      git -C "$ref" fetch -q && git -C "$ref" reset -q --hard '@{u}' ||
+        failed="$failed $ref"
+    done
+    # The repositories the model works in sync inside their host, with its
+    # credentials.  A stopped host's repositories wait for the next one.
+    for host in $(hosts); do
+      running "$host" || continue
+      if busy "$host"; then state=busy; else state=idle; fi
+      "$runtime" exec "mevedel-$host" sh -c "$sync_script" sync "$state" ||
+        failed="$failed $host"
+    done
+    [ -z "$failed" ] || die "could not refresh:$failed" ;;
+
+  *) usage ;;
+esac

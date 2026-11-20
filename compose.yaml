@@ -1,0 +1,86 @@
+# Headless mevedel hosts, one per lobby.  A container is the trust
+# boundary: whoever holds a full or owner lobby link can run commands in
+# it, so the shared public lobbies never see the private projects or login.
+#
+#   ./deploy HOST               set all of this up on a server
+#   ./update                    clone or pull mevedel and gptel, (re)start
+#   ./compose ps|logs|stop      compose with the scripts' runtime and user
+#   ./project add HOST NAME     add a project (and lobby) to a host
+#   ./project clone HOST NAME URL a repository the model works in
+#   ./project ref HOST NAME URL a read-only reference repo for a project
+#   ./lobby-link HOST [NAME]    print a lobby owner link and its QR code
+#   ./attach HOST               open a terminal frame on that daemon
+#
+# compose.refs.yaml, written by ./project, adds the projects' reference
+# mounts; the scripts read both files.  git/HOST holds each host's git
+# configuration and credentials; the scripts create it.
+#
+# A further host is one more service like `public', with its own volume.
+
+# podman-compose would put both containers in one pod, which rules out
+# keep-id and joins what the trust boundary keeps apart.
+x-podman:
+  in_pod: false
+
+x-host: &host
+  # Built by ./update, not by compose.
+  image: localhost/mevedel-host:latest
+  pull_policy: never
+  # Host networking reaches a relay on 127.0.0.1 and needs no ports.
+  network_mode: host
+  # Podman only: map your uid into the container.  Docker does not know
+  # this key; delete the line there.
+  userns_mode: keep-id
+  restart: unless-stopped
+  # SIGTERM runs kill-emacs, which saves sessions and releases their locks.
+  stop_grace_period: 30s
+  env_file: .env
+  environment:
+    # Each host's Claude login, on its state volume like the Codex one.
+    CLAUDE_CONFIG_DIR: /home/mevedel/.emacs.d/claude
+    # The host's git configuration, wherever profile.sh points a command's
+    # XDG_CONFIG_HOME.
+    GIT_CONFIG_GLOBAL: /home/mevedel/.config/git/config
+
+services:
+  private:
+    <<: *host
+    container_name: mevedel-private
+    # A fixed hostname keeps session locks recognisable across restarts.
+    hostname: mevedel-private
+    volumes:
+      # Each directory in it is a project with its own lobby, named after
+      # the directory (./project adds and removes them).
+      - ${PRIVATE_PROJECTS:-./projects/private}:/projects
+      - private-state:/home/mevedel/.emacs.d
+      - private-tools:/home/mevedel/tools
+      - ./init.el:/home/mevedel/.emacs.d/init.el:ro
+      - ./src:/src
+      # Its git identity and push credentials, read-only for the model.
+      - ./git/private:/home/mevedel/.config/git:ro
+      # Each project's own program configuration, in its .xdg.
+      - ./profile.sh:/etc/profile.d/mevedel-project.sh:ro
+
+  public:
+    <<: *host
+    container_name: mevedel-public
+    hostname: mevedel-public
+    volumes:
+      - ${PUBLIC_PROJECTS:-./projects/public}:/projects
+      - public-state:/home/mevedel/.emacs.d
+      - public-tools:/home/mevedel/tools
+      - ./init.el:/home/mevedel/.emacs.d/init.el:ro
+      - ./src:/src
+      - ./git/public:/home/mevedel/.config/git:ro
+      - ./profile.sh:/etc/profile.d/mevedel-project.sh:ro
+
+volumes:
+  # Codex login, eln-cache and mevedel's user state, one per service.  The
+  # private one keeps the volume of the earlier single-host setup.
+  private-state:
+    name: mevedel-host_emacs-state
+  public-state:
+  # What the model installs outside its projects: uv's Pythons and tools,
+  # npm's global packages.  Removing the volume starts it afresh.
+  private-tools:
+  public-tools:

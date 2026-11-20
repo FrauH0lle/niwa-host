@@ -1,0 +1,23 @@
+#!/bin/sh
+# Print a project's lobby owner link, and its QR code when qrencode is
+# installed.  Treat it like a password: it can open and create sessions.
+# For colleagues, hand on a full link instead (Invite, in the lobby page).
+# PROJECT may be left out when the host has only one.
+set -eu
+service=${1:?usage: ./lobby-link HOST [PROJECT]}
+. "$(dirname "$0")/common.sh"
+project=${2:-}
+if [ -z "$project" ]; then
+  set -- "$(projects_dir "$service")"/*/
+  [ $# = 1 ] && [ -d "$1" ] ||
+    { echo "which project? see ./project" >&2; exit 1; }
+  project=$(basename "$1")
+fi
+case $project in
+  ''|.*|*[!A-Za-z0-9._-]*) echo "no project $project" >&2; exit 1 ;;
+esac
+link=$("$runtime" exec "mevedel-$service" emacsclient -s mevedel -e \
+  "(plist-get (mevedel-collaboration-lobby-start \"/projects/$project\") :link-owner)" \
+  | tr -d '"')
+printf '%s\n' "$link"
+if command -v qrencode >/dev/null; then qrencode -t ansiutf8 "$link"; fi

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Open a terminal frame on a host's daemon: log in, answer a prompt, look
+# around.  C-x 5 0 closes the frame and leaves the daemon running.
+service=${1:?usage: ./attach HOST}
+. "$(dirname "$0")/common.sh"
+exec "$runtime" exec -it "mevedel-$service" emacsclient -t -s mevedel

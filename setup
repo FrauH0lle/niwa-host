@@ -1,0 +1,188 @@
+#!/bin/sh
+# Prepare an Ubuntu or Debian machine, VM or LXC container for the hosts.
+# Run as root from this folder inside the user's home; ./deploy does that.
+# Safe to repeat: it installs rootless Podman, gives the folder to the
+# user (mevedel unless MEVEDEL_USER says otherwise), asks for the relay
+# once, starts the hosts and installs the boot start and nightly update.
+set -eu
+[ "$(id -u)" = 0 ] || { echo "run setup as root" >&2; exit 1; }
+cd "$(dirname "$(readlink -f "$0")")"
+user=${MEVEDEL_USER:-mevedel}
+
+echo "== Packages"
+apt-get update -q
+DEBIAN_FRONTEND=noninteractive apt-get install -qy \
+  podman podman-compose uidmap fuse-overlayfs git qrencode
+
+echo "== User $user"
+id -u "$user" >/dev/null 2>&1 || useradd -m -s /bin/bash "$user"
+uid=$(id -u "$user")
+home=$(getent passwd "$user" | cut -d: -f6)
+case $PWD/ in
+  "$home"/*) ;;
+  *) echo "move this folder into $home first" >&2; exit 1 ;;
+esac
+# ./deploy unpacks into the home before useradd can create it.
+chown "$user:$user" "$home"
+chown -R "$user:$user" .
+
+# An ssh key that reaches root also reaches the user.
+if [ -f /root/.ssh/authorized_keys ] && [ ! -e "$home/.ssh/authorized_keys" ]; then
+  install -d -m 700 -o "$user" -g "$user" "$home/.ssh"
+  install -m 600 -o "$user" -g "$user" /root/.ssh/authorized_keys "$home/.ssh/"
+fi
+
+# Rootless Podman maps container ids onto the user's subordinate ids.  An
+# unprivileged LXC container has only 65536 ids, so the usual range from
+# 100000 does not exist there; use what does exist above 10000.
+remapped=
+for kind in uid gid; do
+  limit=$(awk '{ if ($1 + $3 > m) m = $1 + $3 } END { print m }' /proc/self/${kind}_map)
+  if ! awk -F: -v u="$user" -v l="$limit" '$1 == u && $2 + $3 <= l { ok = 1 }
+         END { exit !ok }' /etc/sub$kind; then
+    sed -i "/^$user:/d" /etc/sub$kind
+    echo "$user:10000:$((limit - 10000))" >> /etc/sub$kind
+    remapped=1
+  fi
+done
+
+# A user systemd that runs without a login: boot start, timer, and the
+# session rootless Podman expects.
+loginctl enable-linger "$user"
+systemctl start "user@$uid.service"
+as_user() {
+  runuser -u "$user" -- env HOME="$home" USER="$user" LOGNAME="$user" \
+    XDG_RUNTIME_DIR="/run/user/$uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" "$@"
+}
+[ -z "$remapped" ] || as_user podman system migrate
+if ! as_user podman info >/dev/null; then
+  cat >&2 <<EOF
+Podman does not work for $user.  On Proxmox, the container needs
+Options > Features > nesting (and fuse, if its storage cannot do
+overlayfs); restart the container after changing them.
+EOF
+  exit 1
+fi
+
+echo "== Configuration"
+[ -f .env ] || install -m 600 -o "$user" -g "$user" .env.example .env
+chmod 600 .env
+# Renamed when a host's directory began to hold several projects.
+sed -i 's/^PRIVATE_PROJECT=/PRIVATE_PROJECTS=/' .env
+set_env() { # KEY VALUE
+  # Quoted when needed: the scripts source .env, compose strips the quotes.
+  case $2 in *[!A-Za-z0-9._:/+=-]*) set -- "$1" "'$2'" ;; esac
+  K=$1 V=$2 awk -F= '$1 == ENVIRON["K"] { $0 = ENVIRON["K"] "=" ENVIRON["V"]; done = 1 }
+    { print } END { if (!done) print ENVIRON["K"] "=" ENVIRON["V"] }' .env > .env.new
+  cat .env.new > .env && rm .env.new
+}
+set_env HOST_UID "$uid"
+get_env() { (set -a; . ./.env; eval "printf %s \"\${$1:-}\""); }
+if [ -z "$(get_env MEVEDEL_RELAY_HOST_TOKEN)" ]; then
+  [ -t 0 ] || { echo "set the relay URL and token in $PWD/.env" >&2; exit 1; }
+  url=$(get_env MEVEDEL_RELAY_URL)
+  printf 'Relay URL [%s]: ' "$url"
+  read -r answer
+  printf 'Relay host token: '
+  stty -echo; read -r token; stty echo; echo
+  set_env MEVEDEL_RELAY_URL "${answer:-$url}"
+  set_env MEVEDEL_RELAY_HOST_TOKEN "$token"
+fi
+
+# Once: an earlier Docker setup on this machine.  Stop its hosts, which
+# would hold the same lobbies, and carry over the private one's state
+# volume with its Codex login and sessions.
+if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+  for container in mevedel-private mevedel-work; do
+    docker stop -t 30 "$container" >/dev/null 2>&1 || true
+  done
+  for volume in mevedel-host_emacs-state; do
+    from=$(docker volume inspect -f '{{.Mountpoint}}' "$volume" 2>/dev/null) || continue
+    as_user podman volume exists "$volume" && continue
+    echo "== Copying Docker volume $volume"
+    to=$(as_user podman volume create "$volume" >/dev/null &&
+           as_user podman volume inspect -f '{{.Mountpoint}}' "$volume")
+    cp -a "$from/." "$to/"
+    chown -R "$user:$user" "$to"
+  done
+fi
+
+echo "== Hosts (the first start builds the image, 5-10 minutes)"
+./update --force
+
+echo "== Boot start, nightly update and hourly repository refresh"
+units=$home/.config/systemd/user
+install -d -o "$user" -g "$user" "$home/.config" "$units"
+# KillMode=process: the containers outlive these units' processes.
+cat > "$units/mevedel-host.service" <<EOF
+[Unit]
+Description=mevedel hosts
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$PWD/compose up -d
+ExecStop=$PWD/compose stop
+KillMode=process
+TimeoutSec=15min
+
+[Install]
+WantedBy=default.target
+EOF
+cat > "$units/mevedel-host-update.service" <<EOF
+[Unit]
+Description=Update mevedel and gptel, restart the hosts if they changed
+
+[Service]
+Type=oneshot
+ExecStart=$PWD/update
+KillMode=process
+EOF
+cat > "$units/mevedel-host-refs.service" <<EOF
+[Unit]
+Description=Sync the projects' repositories with their remotes
+
+[Service]
+Type=oneshot
+ExecStart=$PWD/project refresh
+EOF
+cat > "$units/mevedel-host-refs.timer" <<EOF
+[Unit]
+Description=Hourly repository refresh
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
+EOF
+cat > "$units/mevedel-host-update.timer" <<EOF
+[Unit]
+Description=Nightly mevedel host update
+
+[Timer]
+OnCalendar=*-*-* 04:00
+
+[Install]
+WantedBy=timers.target
+EOF
+chown "$user:$user" "$units"/mevedel-host*
+as_user systemctl --user daemon-reload
+as_user systemctl --user enable --now mevedel-host.service mevedel-host-update.timer \
+  mevedel-host-refs.timer
+
+cat <<EOF
+
+Done.  The hosts run as $user and come back after a reboot; updates run
+nightly at 4:00, repositories sync hourly.  Next, from $PWD (as root or $user):
+
+  ./attach private      M-x gptel-openai-oauth-login, then C-x 5 0
+  ./attach public       the same, with the account for colleagues
+  ./project add private NAME [GIT-URL]
+                        a project and its lobby; prints the owner link
+  git/private/config    the host's git identity, and where push
+                        credentials go (likewise git/public)
+  ./project             the projects; ./lobby-link HOST NAME for a link
+EOF

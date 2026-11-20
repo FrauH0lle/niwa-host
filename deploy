@@ -1,0 +1,38 @@
+#!/bin/sh
+# Set up the hosts on a server, VM or LXC container running Ubuntu or
+# Debian, from this machine:
+#   ./deploy 192.0.2.10        as root over ssh
+#   ./deploy admin@server      a sudo user instead
+# Copies this folder to ~mevedel/mevedel-host there and runs ./setup.  Run
+# it again to roll out changes; the server keeps its own .env, src/,
+# projects/, refs/, compose.refs.yaml and git/.
+set -eu
+target=${1:?usage: ./deploy [user@]host}
+case $target in *@*) ;; *) target=root@$target ;; esac
+user=${MEVEDEL_USER:-mevedel}
+cd "$(dirname "$0")"
+
+sudo=
+[ "${target%%@*}" = root ] || sudo=sudo
+# One connection, so a password is asked for once.
+set -- -o ControlMaster=auto -o ControlPersist=60 \
+  -o "ControlPath=${XDG_RUNTIME_DIR:-/tmp}/mevedel-deploy-%C" "$target"
+
+# Logins with this machine's ssh key from now on; setup hands root's keys
+# on to the user.  Existing keys are skipped.
+if ls ~/.ssh/id_*.pub >/dev/null 2>&1; then
+  ssh-copy-id "$@" 2>&1 | grep -v -e '^/usr/bin/ssh-copy-id: INFO' -e '^$' || true
+fi
+
+# Unpacked as the login user first: sudo cannot ask for a password while
+# reading the archive.
+staging=.mevedel-host-deploy
+tar -c --exclude=./.env --exclude=./src --exclude=./projects --exclude=./refs \
+    --exclude=./compose.refs.yaml --exclude=./git \
+    --exclude=./update.log . |
+  ssh "$@" "rm -rf $staging && mkdir $staging && tar -x -C $staging"
+ssh -t "$@" "$sudo sh -euc '
+  id -u $user >/dev/null 2>&1 || useradd -m -s /bin/bash $user
+  dir=\$(getent passwd $user | cut -d: -f6)/mevedel-host
+  mkdir -p \$dir && cp -R $staging/. \$dir && rm -rf $staging
+  exec env MEVEDEL_USER=$user \$dir/setup'"

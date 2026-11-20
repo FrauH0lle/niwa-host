@@ -1,0 +1,139 @@
+#!/bin/sh
+# Bring src/mevedel and src/gptel to their branch tips, migrate sessions
+# while the hosts are stopped, then start the hosts again.
+#
+# Refuses while any host is running a turn, so it is safe to run nightly
+# (./setup installs a timer for that).  --force overrides that busy check;
+# --rebuild also rebuilds the image, for Emacs or ELPA dependency changes.
+# Even unchanged sources need an offline migration check.  Migration failures
+# leave the hosts stopped, with the migrator's original-session backups intact.
+set -eu
+. "$(dirname "$0")/common.sh"
+# Serialize manual updates and the nightly timer, including source changes
+# and the entire offline migration/startup window.
+exec 9>.update.lock
+if ! flock -n 9; then
+  echo "Another update is running; not updating" >&2
+  exit 1
+fi
+services=$(hosts)
+force= rebuild=
+case ${1:-} in
+  --force) force=1 ;;
+  --rebuild) force=1 rebuild=1 ;;
+  ?*) echo "usage: ./update [--force|--rebuild]" >&2; exit 1 ;;
+esac
+
+if [ -z "$force" ]; then
+  for service in $services; do
+    if busy "$service"; then
+      echo "mevedel-$service is running a turn; not updating (--force overrides)"
+      exit 1
+    fi
+  done
+fi
+
+# Old code must save sessions and release ownership before either project
+# directories or sources change.  A migration failure must not start hosts
+# against a mixture of old and converted sessions.
+trap 'status=$?; if [ "$status" -ne 0 ]; then
+  echo "Update did not finish. Check ./compose ps; resolve the error and rerun ./update." >&2
+fi' 0
+"$runtime" compose stop
+
+# A host's projects directory used to be its one project.  That project
+# moves into it, named after the host, so the container still sees it at
+# /projects/HOST, with its lobby links and sessions.
+for service in $services; do
+  dir=$(projects_dir "$service")
+  if [ -e "$dir/.git" ]; then
+    case $(readlink -f "$dir") in
+      "$PWD"/projects/*) ;;
+      *) echo "$dir should hold projects, not be one; see .env.example" >&2
+         exit 1 ;;
+    esac
+    mv "$dir" "$dir.moving" && mkdir "$dir" && mv "$dir.moving" "$dir/$service"
+    echo "Moved the $service project to $dir/$service"
+    force=1
+  fi
+  mkdir -p "$dir"
+  # Projects from before profile.sh, whose .xdg would otherwise show up as
+  # untracked files with the logins in them.
+  for project in "$dir"/*/; do
+    [ ! -d "$project" ] || exclude "$project" /.xdg/
+  done
+done
+
+# The clones are deployment copies: the branch tip wins, even after a
+# force push, and nothing local is kept but ignored bytecode.
+sync() { # DIR REPO BRANCH
+  if [ -d "$1/.git" ]; then
+    git -C "$1" fetch -q "$2" "$3"
+    git -C "$1" reset -q --hard FETCH_HEAD
+  else
+    git clone -q --branch "$3" "$2" "$1"
+  fi
+}
+
+revisions() {
+  for dir in src/mevedel src/gptel; do
+    git -C "$dir" rev-parse HEAD 2>/dev/null || echo none
+  done
+}
+
+mkdir -p src
+before=$(revisions)
+sync src/mevedel "$MEVEDEL_REPO" "$MEVEDEL_BRANCH"
+sync src/gptel "$GPTEL_REPO" "$GPTEL_BRANCH"
+after=$(revisions)
+
+if [ "$before" = "$after" ] && [ -z "$force" ]; then
+  echo "Up to date: $(git -C src/mevedel log -1 --format='mevedel %h %s')"
+else
+  echo "Updated: $(git -C src/mevedel log -1 --format='mevedel %h %s')"
+  echo "         $(git -C src/gptel log -1 --format='gptel %h %s')"
+fi
+# Built here rather than by compose, with host networking like the hosts
+# themselves: the rootless network helper (pasta) crashes in some LXC
+# containers, and compose cannot pass the build a network.
+# A changed EXTRA_PACKAGES in .env rebuilds it too.
+image=localhost/mevedel-host:latest
+extra=${EXTRA_PACKAGES:-}
+if [ -n "$rebuild" ] \
+   || ! built=$("$runtime" image inspect --format \
+                  '{{index .Config.Labels "mevedel-host.extra-packages"}}' \
+                  "$image" 2>/dev/null) \
+   || [ "$built" != "$extra" ]; then
+  "$runtime" build --network host --build-arg HOST_UID="${HOST_UID:-1000}" \
+    --build-arg EXTRA_PACKAGES="$extra" -t "$image" .
+fi
+prepare_mounts
+
+# Use each service's image, dependencies, user and project mounts, but never
+# its daemon entrypoint.  Compile before loading the standalone migrator.
+# Include the old top-level project as well as every served project directory.
+# The CLI prints per-session outcomes/backups and fails closed on any error.
+for service in $services; do
+  echo "Checking session migrations for $service"
+  "$runtime" compose run --rm --no-deps -T \
+    --name "mevedel-migration-$service-$$" --entrypoint flock "$service" \
+    /src/.compile.lock emacs --batch -Q \
+    --eval '(progn
+              (require (quote bytecomp))
+              (advice-add (quote byte-compile-file) :around
+                          (lambda (compile file &rest args)
+                            (or (apply compile file args)
+                                (error "Compilation failed: %s" file)))))' \
+    -l /opt/compile.el \
+    -l /src/mevedel/scripts/migrate-sessions.el \
+    --eval '(dolist (project (cons "/projects"
+                                  (directory-files "/projects" t "\\`[^.]")))
+              (let ((sessions (expand-file-name ".mevedel/sessions" project)))
+                (when (and (file-directory-p project)
+                           (file-directory-p sessions))
+                  (princ (format "Checking %s\n" sessions))
+                  (let ((command-line-args-left (list sessions)))
+                    (mevedel-migrate-session-main)))))'
+done
+
+"$runtime" compose up -d --force-recreate 9>&-
