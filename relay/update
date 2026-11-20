@@ -1,0 +1,100 @@
+#!/bin/sh
+# Install the newest relay release from GitHub and restart the relay,
+# unless the installed relay is as new or newer, e.g. a build deployed by
+# hand.  "Newer" is the later commit time: Go records it (vcs.time) in every
+# build made from a git checkout, the release builds included.  A relay
+# without one is left alone.
+#
+#   ./update             check once
+#   ./update --install   copy this script to /usr/local/sbin and run it
+#                        nightly from a systemd timer
+#
+# Runs as root on the relay's server.  Override the defaults in the
+# environment, e.g. RELAY_SERVICE=niwa-relay ./update.
+set -eu
+repo=${RELAY_REPO:-FrauH0lle/mevedel}
+asset=${RELAY_ASSET:-mevedel-relay}
+bin=${RELAY_BIN:-/usr/local/bin/mevedel-relay}
+service=${RELAY_SERVICE:-mevedel-relay}
+die() { echo "$*" >&2; exit 1; }
+
+if [ "${1:-}" = --install ]; then
+  install -m 755 "$0" /usr/local/sbin/relay-update
+  cat > /etc/systemd/system/relay-update.service <<EOF
+[Unit]
+Description=Install a newer relay release
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=RELAY_REPO=$repo RELAY_ASSET=$asset RELAY_BIN=$bin RELAY_SERVICE=$service
+ExecStart=/usr/local/sbin/relay-update
+EOF
+  cat > /etc/systemd/system/relay-update.timer <<EOF
+[Unit]
+Description=Nightly relay update
+
+[Timer]
+OnCalendar=*-*-* 04:30
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now relay-update.timer
+  echo "Installed; journalctl -u relay-update shows what it did."
+  exit 0
+fi
+[ $# = 0 ] || die "usage: $0 [--install]"
+
+case $(uname -m) in
+  x86_64) arch=amd64 ;;
+  aarch64) arch=arm64 ;;
+  *) die "no relay release for $(uname -m)" ;;
+esac
+file=$asset-linux-$arch
+commit_time() { grep -a -o 'vcs\.time=[0-9TZ:-]*' "$1" | head -n 1 | cut -d= -f2; }
+
+# The repository releases other things too; the newest relay one wins.
+tag=$(curl -fsSL "https://api.github.com/repos/$repo/releases?per_page=50" |
+  jq -r '[.[] | select(.draft | not) | select(.tag_name | startswith("relay-"))][0].tag_name')
+[ "$tag" != null ] || die "no relay release in $repo"
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' 0
+url=https://github.com/$repo/releases/download/$tag
+curl -fsSL -o "$tmp/$file" "$url/$file"
+curl -fsSL -o "$tmp/SHA256SUMS" "$url/SHA256SUMS"
+(cd "$tmp" && grep " $file\$" SHA256SUMS | sha256sum -c --quiet) ||
+  die "$tag: $file does not match its checksum"
+
+new=$(commit_time "$tmp/$file")
+[ -n "$new" ] || die "$tag has no commit time"
+old=
+if [ -e "$bin" ]; then
+  old=$(commit_time "$bin")
+  [ -n "$old" ] || { echo "$bin has no commit time; leaving it"; exit 0; }
+  # UTC ISO 8601 times sort as text.
+  if [ "$new" = "$old" ] ||
+     [ "$(printf '%s\n%s\n' "$old" "$new" | sort | tail -n 1)" = "$old" ]; then
+    echo "Up to date: installed $old, $tag $new"
+    exit 0
+  fi
+fi
+
+install -m 755 "$tmp/$file" "$bin.new"
+[ ! -e "$bin" ] || cp -p "$bin" "$bin.prev"
+mv "$bin.new" "$bin"
+systemctl restart "$service"
+sleep 5
+if ! systemctl is-active --quiet "$service"; then
+  if [ -e "$bin.prev" ]; then
+    mv "$bin.prev" "$bin"
+    systemctl restart "$service"
+  fi
+  die "$tag did not start; restored the previous relay"
+fi
+echo "Installed $tag ($new), replacing ${old:-nothing}"

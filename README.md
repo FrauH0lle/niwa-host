@@ -304,6 +304,27 @@ reach `127.0.0.1`; use the desktop browser.
 
 ## Updating
 
+### The relay
+
+`relay/update` runs on the relay's server as root. It installs the newest
+`relay-*` release from GitHub, after checking it against the release's
+`SHA256SUMS`, and restarts the relay. It never replaces a relay that is as new
+or newer: it compares the commit times Go records in every build made from a
+git checkout (`vcs.time`), so a build you deployed by hand stays until a
+release with a later commit appears. A relay without that record is never
+replaced. If the new relay does not come up, the previous binary is put back.
+
+```sh
+scp relay/update root@relay-server:/tmp/ && ssh root@relay-server /tmp/update --install
+```
+
+installs it as `/usr/local/sbin/relay-update` with a nightly timer at 4:30
+(`journalctl -u relay-update`). `RELAY_REPO`, `RELAY_ASSET`, `RELAY_BIN` and
+`RELAY_SERVICE` override the GitHub repository, asset name, binary path and
+unit, and `--install` records them in the unit.
+
+### The hosts
+
 `./update` fetches the branch tips in `.env` and builds the image if needed
 while the hosts still run, so a network or build failure changes nothing.
 Then it stops the hosts cleanly, brings `src/` to the fetched tips, compiles
