@@ -81,10 +81,12 @@
 ;;
 ;;; niwa
 
-(require 'niwa)
 ;; Global user state on the state volume; the default ~/.niwa would sit in
-;; the container filesystem and vanish on every recreate.
+;; the container filesystem and vanish on every recreate.  Set before the
+;; require, so nothing derived at load time sees the default.
+(defvar niwa-user-dir)
 (setq niwa-user-dir (expand-file-name "niwa/" user-emacs-directory))
+(require 'niwa)
 (setq niwa-empty-tag-query-matches-all nil
       niwa-permission-reviewer 'auto
       niwa-permission-mode 'edits
