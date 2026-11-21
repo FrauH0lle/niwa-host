@@ -137,22 +137,6 @@ prepare_mounts
 # Include the old top-level project as well as every served project directory.
 # The CLI prints per-session outcomes/backups and fails closed on any error.
 for service in $services; do
-  # ONE-OFF, remove after the mevedel -> niwa cutover: move each workspace's
-  # .mevedel/ to .niwa/.  The old user directory (~/.mevedel) was never on
-  # a volume, so there is none to migrate; niwa's own lives on the state
-  # volume (init.el).  Fails closed like the session migrator (set -e).
-  echo "Checking mevedel -> niwa migration for $service"
-  "$runtime" compose run --rm --no-deps -T \
-    --name "niwa-from-mevedel-$service-$$" --entrypoint sh "$service" -c '
-      set -e
-      for dir in /projects/*; do
-        [ -d "$dir/.mevedel" ] && [ ! -d "$dir/.niwa" ] || continue
-        echo "Migrating $dir"
-        emacs --batch -Q -l /opt/compile.el \
-          -l /src/niwa/scripts/migrate-from-mevedel.el \
-          -f niwa-migrate-from-mevedel-main "$dir"
-      done'
-
   echo "Checking session migrations for $service"
   "$runtime" compose run --rm --no-deps -T \
     --name "niwa-migration-$service-$$" --entrypoint emacs "$service" \

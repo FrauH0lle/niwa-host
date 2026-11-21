@@ -342,24 +342,3 @@ forces it, e.g. for new Emacs or ELPA versions. `init.el` changes need only
 
 `/collab lobby rotate` inside a host (via `./attach`) revokes that lobby's
 links; other lobbies are unaffected.
-
-## Migrating from mevedel-host
-
-A one-off move from the old `mevedel` kit to a fresh container (the Unix
-user, units, volumes and `.env` keys are all renamed, so nothing is shared):
-
-1. Build a new Ubuntu/Debian CT and run `./deploy` against it.
-2. Copy `.env` from the old host, renaming every `MEVEDEL_*` key to `NIWA_*`
-   (`NIWA_REPO` is `https://github.com/FrauH0lle/niwa.el.git`).
-3. Copy `git/`, `refs/` and `projects/` from the old kit directory.
-4. Carry over the Codex and Claude logins, one volume per host, with
-   `podman volume export mevedel-host_NAME | podman volume import niwa-host_NAME -`
-   (create the target first with `podman volume create`). The mapping is
-   `emacs-state` to `private-state`, `public-state` to `public-state`, and
-   likewise `private-tools`/`public-tools`. Then check the ownership inside
-   the new volumes (`podman unshare ls -ln`); it must match the `niwa` user.
-5. Run `./update --force`. Its one-off pre-step moves every project's
-   `.mevedel/` to `.niwa/` (`scripts/migrate-from-mevedel.el`); it can be
-   removed from `update` after the cutover.
-
-Nothing on the old host is disabled or stopped by this.
