@@ -138,14 +138,14 @@ prepare_mounts
 # The CLI prints per-session outcomes/backups and fails closed on any error.
 for service in $services; do
   # ONE-OFF, remove after the mevedel -> niwa cutover: move each workspace's
-  # .mevedel/ to .niwa/ (and the user directory, which niwa keeps at
-  # /home/niwa/.niwa -- the container's home, not a volume, so normally
-  # absent).  Fails closed like the session migrator (set -e).
+  # .mevedel/ to .niwa/.  The old user directory (~/.mevedel) was never on
+  # a volume, so there is none to migrate; niwa's own lives on the state
+  # volume (init.el).  Fails closed like the session migrator (set -e).
   echo "Checking mevedel -> niwa migration for $service"
   "$runtime" compose run --rm --no-deps -T \
     --name "niwa-from-mevedel-$service-$$" --entrypoint sh "$service" -c '
       set -e
-      for dir in /projects/* /home/niwa; do
+      for dir in /projects/*; do
         [ -d "$dir/.mevedel" ] && [ ! -d "$dir/.niwa" ] || continue
         echo "Migrating $dir"
         emacs --batch -Q -l /opt/compile.el \

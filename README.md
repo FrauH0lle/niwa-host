@@ -350,7 +350,7 @@ user, units, volumes and `.env` keys are all renamed, so nothing is shared):
 
 1. Build a new Ubuntu/Debian CT and run `./deploy` against it.
 2. Copy `.env` from the old host, renaming every `MEVEDEL_*` key to `NIWA_*`
-   (`NIWA_REPO` is `https://github.com/FrauH0lle/niwa.git`).
+   (`NIWA_REPO` is `https://github.com/FrauH0lle/niwa.el.git`).
 3. Copy `git/`, `refs/` and `projects/` from the old kit directory.
 4. Carry over the Codex and Claude logins, one volume per host, with
    `podman volume export mevedel-host_NAME | podman volume import niwa-host_NAME -`

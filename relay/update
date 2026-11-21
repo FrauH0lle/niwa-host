@@ -12,7 +12,7 @@
 # Runs as root on the relay's server.  Override the defaults in the
 # environment, e.g. RELAY_SERVICE=niwa-relay ./update.
 set -eu
-repo=${RELAY_REPO:-FrauH0lle/niwa}
+repo=${RELAY_REPO:-FrauH0lle/niwa.el}
 asset=${RELAY_ASSET:-niwa-relay}
 bin=${RELAY_BIN:-/usr/local/bin/niwa-relay}
 service=${RELAY_SERVICE:-niwa-relay}
