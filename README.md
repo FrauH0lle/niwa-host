@@ -298,7 +298,7 @@ they do not sync with your desktop.
 
 Copy `.env.example` to `.env`, set `HOST_UID` to `id -u` and
 `NIWA_RELAY_URL=ws://127.0.0.1:7466`, run `./update`, add projects and
-run `~/Projekte/niwa/relay/relay` alongside. With Docker instead of
+run `~/Projekte/niwa.el/relay/relay` alongside. With Docker instead of
 Podman, delete the `userns_mode` line from `compose.yaml`. A phone cannot
 reach `127.0.0.1`; use the desktop browser.
 
