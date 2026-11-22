@@ -276,10 +276,7 @@ another service in `compose.yaml` like `public`, with its own volume.
   runs the standalone migrator for each host's user state and for every served
   project (including any old top-level project), covering its sessions and its
   workspace state. It also checks when source revisions are unchanged, so every
-  update briefly interrupts the hosts. Already-current state is not rewritten.
-  The migrator refuses while a memory-review capture is still pending, which
-  leaves the hosts stopped, so let pending memory reviews finish before an
-  update that brings a niwa release with a state migration. Changed sessions retain the migrator's hidden
+  update briefly interrupts the hosts. Already-current state is not rewritten. Changed sessions retain the migrator's hidden
   `.migration-backup-SESSION-ID-*/session` backups beside the session directories.
   A migration failure prevents both hosts from starting; inspect the reported
   error and backups, resolve it, then rerun `./update`. Do not remove ownership
