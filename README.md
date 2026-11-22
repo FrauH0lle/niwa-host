@@ -36,7 +36,7 @@ key only.
 1. Push niwa; only pushed commits reach the server:
 
    ```sh
-   cd ~/Projekte/niwa && git push
+   cd ~/Projekte/niwa.el && git push
    ```
 
 2. Update the relay the usual way (`go build` and redeploy, or the
