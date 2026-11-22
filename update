@@ -1,5 +1,5 @@
 #!/bin/sh
-# Bring src/niwa and src/gptel to their branch tips, migrate sessions
+# Bring src/niwa and src/gptel to their branch tips, migrate persisted state
 # while the hosts are stopped, then start the hosts again.
 #
 # Refuses while any host is running a turn, so it is safe to run nightly
@@ -134,22 +134,28 @@ prepare_mounts
 # Use each service's image, dependencies, user and project mounts, but never
 # its daemon entrypoint.  compile.el here only sets up the load path: the
 # sources are compiled and read-only.
-# Include the old top-level project as well as every served project directory.
-# The CLI prints per-session outcomes/backups and fails closed on any error.
+# The migrator runs once with --user for the user state, which init.el keeps
+# on the state volume (-Q skips init.el, so set it the same way), then once
+# per project: the old top-level one and every served project directory.  A
+# project run covers its sessions and its workspace state under .niwa.  The
+# CLI prints per-item outcomes/backups and fails closed on any error.
 for service in $services; do
-  echo "Checking session migrations for $service"
+  echo "Checking state migrations for $service"
   "$runtime" compose run --rm --no-deps -T \
     --name "niwa-migration-$service-$$" --entrypoint emacs "$service" \
     --batch -Q \
     -l /opt/compile.el \
     -l /src/niwa/scripts/migrate-sessions.el \
-    --eval '(dolist (project (cons "/projects"
-                                  (directory-files "/projects" t "\\`[^.]")))
-              (let ((sessions (expand-file-name ".niwa/sessions" project)))
-                (when (and (file-directory-p project)
-                           (file-directory-p sessions))
-                  (princ (format "Checking %s\n" sessions))
-                  (let ((command-line-args-left (list sessions)))
+    --eval '(progn
+              (setq niwa-user-dir (expand-file-name "niwa/" user-emacs-directory))
+              (princ "Checking user state\n")
+              (let ((command-line-args-left (list "--user")))
+                (niwa-migrate-session-main))
+              (dolist (project (cons "/projects"
+                                     (directory-files "/projects" t "\\`[^.]")))
+                (when (file-directory-p (expand-file-name ".niwa" project))
+                  (princ (format "Checking %s\n" project))
+                  (let ((command-line-args-left (list project)))
                     (niwa-migrate-session-main)))))'
 done
 

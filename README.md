@@ -270,13 +270,16 @@ another service in `compose.yaml` like `public`, with its own volume.
 - **The hourly sync:** `journalctl --user -u niwa-host-refs` as
   `niwa`; "could not fetch" usually means the host's credentials in
   `git/HOST` do not reach that repository.
-- **Session migrations during update:** `./update` fetches the sources and
+- **State migrations during update:** `./update` fetches the sources and
   builds the image while the hosts still run, stops both hosts cleanly
   before replacing sources, compiles the new code in one one-off container, and
-  runs the standalone session migrator for every served project (including
-  any old top-level project). It also checks sessions when source revisions
-  are unchanged, so every update briefly interrupts the hosts. Already-current
-  sessions are not rewritten. Changed sessions retain the migrator's hidden
+  runs the standalone migrator for each host's user state and for every served
+  project (including any old top-level project), covering its sessions and its
+  workspace state. It also checks when source revisions are unchanged, so every
+  update briefly interrupts the hosts. Already-current state is not rewritten.
+  The migrator refuses while a memory-review capture is still pending, which
+  leaves the hosts stopped, so let pending memory reviews finish before an
+  update that brings a niwa release with a state migration. Changed sessions retain the migrator's hidden
   `.migration-backup-SESSION-ID-*/session` backups beside the session directories.
   A migration failure prevents both hosts from starting; inspect the reported
   error and backups, resolve it, then rerun `./update`. Do not remove ownership
@@ -328,8 +331,8 @@ unit, and `--install` records them in the unit.
 `./update` fetches the branch tips in `.env` and builds the image if needed
 while the hosts still run, so a network or build failure changes nothing.
 Then it stops the hosts cleanly, brings `src/` to the fetched tips, compiles
-it in a one-off container without network, and migrates each host's project
-sessions before recreating the hosts. The hosts mount `src/` read-only: the
+it in a one-off container without network, and migrates each host's user
+state and project state before recreating the hosts. The hosts mount `src/` read-only: the
 compile step is its only writer, so neither host can change code the other
 loads. It checks migrations even when sources are unchanged; current sessions
 are a no-op, but the hosts still briefly stop. Compilation or migration
